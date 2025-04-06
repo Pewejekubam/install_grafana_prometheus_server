@@ -7,7 +7,7 @@
   vars_files:
     - credentials.yml  # Your encrypted vault file
   vars:
-    domain_name: "nodemon.americanpatriotdave.com"  # Replace with your actual domain if different
+    domain_name: "example.com"  # Replace with your actual domain
     prometheus_version: "2.45.0"  # Latest stable version as of knowledge cutoff
     node_exporter_version: "1.5.0"  # Latest stable version as of knowledge cutoff
     use_staging_cert: true  # Set to false to obtain production certificates
