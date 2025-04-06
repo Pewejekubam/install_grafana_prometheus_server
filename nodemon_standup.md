@@ -82,11 +82,10 @@ sudo vim /etc/grafana/grafana.ini
 http_addr = 127.0.0.1   # Bind to local IP
 http_port = 3000        # HTTP port
 root_url = /            # Explicitly set root_url for port mapping setups
-domain = nodemon.americanpatriotdave.com  # Replace with your domain
-
+domain = example.com    # Replace with your domain
 ```
 
-**Comment:** Replace `nodemon.americanpatriotdave.com` with the Fully Qualified Domain Name (FQDN) of your server. This is the domain name users will use to access Grafana.
+**Comment:** Replace `example.com` with the Fully Qualified Domain Name (FQDN) of your server. This is the domain name users will use to access Grafana.
 
 5.3 Save the file and exit:
 ```bash
@@ -111,7 +110,7 @@ sudo vim /etc/nginx/sites-available/certbot.conf
 ```nginx
 server {
     listen 80;
-    server_name nodemon.americanpatriotdave.com;  # Replace with your FQDN
+    server_name example.com;  # Replace with your FQDN
 
     location /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -123,7 +122,7 @@ server {
 }
 ```
 
-**Comment:** Replace `nodemon.americanpatriotdave.com` with your server's Fully Qualified Domain Name (FQDN). This ensures certbot can validate the domain ownership.
+**Comment:** Replace `example.com` with your server's Fully Qualified Domain Name (FQDN). This ensures certbot can validate the domain ownership.
 
 6.3 Save the file and exit:
 ```bash
@@ -151,21 +150,21 @@ sudo systemctl reload nginx
 
 7.1 Request a staging certificate for testing:
 ```bash
-sudo certbot --nginx -d nodemon.americanpatriotdave.com --staging
+sudo certbot --nginx -d example.com --staging
 ```
 
-**Description:** The staging certificate is used to test the certbot process without hitting Let's Encrypt's production rate limits. Replace `nodemon.americanpatriotdave.com` with your FQDN.
+**Description:** The staging certificate is used to test the certbot process without hitting Let's Encrypt's production rate limits. Replace `example.com` with your FQDN.
 
 7.2 Request a production certificate after testing:
 ```bash
-sudo certbot --nginx -d nodemon.americanpatriotdave.com
+sudo certbot --nginx -d example.com
 ```
 
-**Description:** The production certificate is the actual TLS certificate used for securing your domain. Replace `nodemon.americanpatriotdave.com` with your FQDN.
+**Description:** The production certificate is the actual TLS certificate used for securing your domain. Replace `example.com` with your FQDN.
 
 **Success Criteria:** If the certbot process is successful, you will see a message similar to:
 ```plaintext
-Congratulations! You have successfully enabled HTTPS on https://nodemon.americanpatriotdave.com
+Congratulations! You have successfully enabled HTTPS on https://example.com
 ```
 
 **Dependency:** The success of this step is critical for the remainder of the setup. If certbot fails, HTTPS will not be enabled, and subsequent steps relying on the certificate (e.g., Nginx configuration) will also fail.
@@ -186,12 +185,12 @@ sudo certbot renew --dry-run
 sudo vim /etc/nginx/sites-available/grafana.conf
 ```
 
-8.2 Add the following configuration 
+8.2 Add the following configuration:
 ```nginx
 # HTTP server block for certbot and certificate renewal
 server {
     listen 80;
-    server_name nodemon.americanpatriotdave.com;
+    server_name example.com;
 
     location /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -217,13 +216,12 @@ server {
         proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # IP Whitelisting for Prometheus access
+        proxy_set_header X-Forwarded-Proto $scheme
+        
+        # IP Whitelisting for Grafana access
         allow 192.168.0.0/16;       # Replace with trusted IP addresses
         allow 10.168.0.0/16;        # Example of a trusted CIDR block
         deny all;                   # Deny access to all other IPs
-
     }
 }
 

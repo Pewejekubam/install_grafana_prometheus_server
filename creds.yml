@@ -1,0 +1,5 @@
+# credentials.yml
+vault_ansible_sudo_pass: "MyGrEatP@ssw0rd!"
+vault_ansible_password: "MyGrEatP@ssw0rd!"
+vault_private_key_path: "/path/to/id_ecdsa"
+vault_certbot_email: "letsencrypt@example.com"
