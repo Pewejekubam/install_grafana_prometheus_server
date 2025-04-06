@@ -1,0 +1,16 @@
+# templates/node_exporter.service.j2
+[Unit]
+Description=Node Exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/node_exporter
+
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

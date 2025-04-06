@@ -1,0 +1,11 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "ansible.playbook.arguments": "-i inventory.yml --vault-password-file ~/git-root/whiskeytangofoxtrot",
+        "ansible.python.interpreterPath": "/bin/python3"
+    }
+}

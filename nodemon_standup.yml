@@ -1,0 +1,352 @@
+---
+# playbook.yml - Setup Grafana, Prometheus, and TLS with Let's Encrypt on Ubuntu
+
+- name: Setup Grafana, Prometheus, and TLS with Let's Encrypt
+  hosts: ubuntu_servers
+  become: yes
+  vars_files:
+    - credentials.yml  # Your encrypted vault file
+  vars:
+    domain_name: "nodemon.americanpatriotdave.com"  # Replace with your actual domain if different
+    prometheus_version: "2.45.0"  # Latest stable version as of knowledge cutoff
+    node_exporter_version: "1.5.0"  # Latest stable version as of knowledge cutoff
+    use_staging_cert: true  # Set to false to obtain production certificates
+
+  tasks:
+    # Step 1: Install Required Dependencies
+    - name: Update apt package index
+      apt:
+        update_cache: yes
+      retries: 3
+      delay: 5
+      register: apt_update
+      until: apt_update is succeeded
+      failed_when: apt_update is failed
+
+    - name: Install required dependencies
+      apt:
+        name:
+          - gnupg2
+          - apt-transport-https
+          - software-properties-common
+          - wget
+          - nginx
+          - certbot
+          - python3-certbot-nginx
+        state: present
+      retries: 3
+      delay: 5
+      register: apt_install
+      until: apt_install is succeeded
+      failed_when: apt_install is failed
+
+    # Step 2: Add Grafana GPG Key and Repository
+    - name: Download and install Grafana GPG key
+      shell: curl -fsSL https://packages.grafana.com/gpg.key | gpg --dearmor | tee /usr/share/keyrings/grafana-archive-keyring.gpg > /dev/null
+      args:
+        creates: /usr/share/keyrings/grafana-archive-keyring.gpg
+      retries: 3
+      delay: 5
+      register: grafana_gpg
+      until: grafana_gpg is succeeded
+      failed_when: grafana_gpg is failed
+
+    - name: Add Grafana APT repository
+      apt_repository:
+        repo: deb [signed-by=/usr/share/keyrings/grafana-archive-keyring.gpg] https://packages.grafana.com/oss/deb stable main
+        state: present
+        filename: grafana
+
+    # Step 3: Install Grafana
+    - name: Update apt package index after adding repositories
+      apt:
+        update_cache: yes
+
+    - name: Install Grafana
+      apt:
+        name: grafana
+        state: present
+
+    - name: Ensure correct ownership of Grafana configuration files
+      file:
+        path: /etc/grafana
+        owner: grafana
+        group: grafana
+        mode: '0750'
+        recurse: yes
+
+    # Step 4: Start and Enable Grafana Service
+    - name: Reload systemd to recognize Grafana service
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Grafana service
+      systemd:
+        name: grafana-server
+        state: started
+        enabled: yes
+
+    # Step 5: Configure Grafana
+    - name: Configure Grafana server settings
+      template:
+        src: templates/grafana.ini.j2
+        dest: /etc/grafana/grafana.ini
+        owner: grafana
+        group: grafana
+        mode: '0644'
+      notify: restart grafana
+
+    # Step 6: Configure Nginx for Certbot
+    - name: Create Nginx configuration for certbot
+      template:
+        src: templates/certbot_nginx.conf.j2
+        dest: /etc/nginx/sites-available/certbot.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: validate nginx config
+
+    - name: Enable certbot Nginx configuration
+      file:
+        src: /etc/nginx/sites-available/certbot.conf
+        dest: /etc/nginx/sites-enabled/certbot.conf
+        state: link
+      notify: validate nginx config
+
+    # Step 7: Obtain and Install Let's Encrypt TLS Certificate
+    - name: Obtain Let's Encrypt staging certificate
+      command: >
+        certbot --nginx -d {{ domain_name }} {% if use_staging_cert %}--staging{% endif %} --non-interactive --agree-tos --email {{ vault_certbot_email }}
+      args:
+        creates: /etc/letsencrypt/live/{{ domain_name }}/fullchain.pem
+      retries: 3
+      delay: 5
+      register: certbot_staging
+      until: certbot_staging is succeeded
+      failed_when: certbot_staging is failed
+      changed_when: certbot_staging is succeeded
+
+    - name: Switch to final Nginx configuration after certbot
+      template:
+        src: templates/production_nginx.conf.j2
+        dest: /etc/nginx/sites-available/grafana.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: validate nginx config
+
+    - name: Enable Grafana Nginx configuration
+      file:
+        src: /etc/nginx/sites-available/grafana.conf
+        dest: /etc/nginx/sites-enabled/grafana.conf
+        state: link
+      notify: validate nginx config
+
+    - name: Remove certbot Nginx configuration
+      file:
+        path: /etc/nginx/sites-enabled/certbot.conf
+        state: absent
+      notify: validate nginx config
+
+    - name: Create directory for Let's Encrypt
+      file:
+        path: /var/www/html/.well-known/acme-challenge
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        recurse: yes
+
+    - name: Secure /var/www directory
+      file:
+        path: /var/www
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        recurse: yes
+
+    - name: Add connection_upgrade map to Nginx http block
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        insertafter: "http {"
+        line: |
+          map $http_upgrade $connection_upgrade {
+              default upgrade;
+              ''      close;
+          }
+        state: present
+      notify: restart nginx
+
+    - name: Add note about switching to production certificate
+      debug:
+        msg: >
+          Staging certificate has been installed. To obtain a production certificate after testing,
+          run: sudo certbot --nginx -d {{ domain_name }} --non-interactive --agree-tos --email {{ vault_certbot_email }}
+      when: use_staging_cert | bool
+      
+    - name: Enable automatic certificate renewal
+      systemd:
+        name: certbot.timer
+        state: started
+        enabled: yes
+
+    # Step 8: Install and Configure Prometheus
+    - name: Create Prometheus system group
+      group:
+        name: prometheus
+        state: present
+
+    - name: Create Prometheus system user
+      user:
+        name: prometheus
+        group: prometheus
+        system: yes
+        shell: /sbin/nologin
+        home: /var/lib/prometheus
+        create_home: no
+
+    - name: Create Prometheus directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: '0750'
+      loop:
+        - /etc/prometheus
+        - /var/lib/prometheus
+
+    - name: Download Prometheus binary
+      get_url:
+        url: https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz
+        dest: /tmp/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz
+        mode: '0644'
+      retries: 3
+      delay: 5
+      register: download_prometheus
+      until: download_prometheus is succeeded
+
+    - name: Extract Prometheus archive
+      unarchive:
+        src: /tmp/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz
+        dest: /tmp
+        remote_src: yes
+        creates: /tmp/prometheus-{{ prometheus_version }}.linux-amd64
+
+    - name: Copy Prometheus binaries
+      copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        remote_src: yes
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      loop:
+        - prometheus
+        - promtool
+
+    - name: Copy Prometheus configuration files
+      copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "/etc/prometheus/"
+        remote_src: yes
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+      loop:
+        - prometheus.yml
+        - consoles
+        - console_libraries
+
+    - name: Create Prometheus configuration file
+      template:
+        src: templates/prometheus.yml.j2
+        dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+
+    - name: Create Prometheus systemd service file
+      template:
+        src: templates/prometheus.service.j2
+        dest: /etc/systemd/system/prometheus.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: reload systemd
+
+    - name: Start and enable Prometheus service
+      systemd:
+        name: prometheus
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    # Step 11: Install node_exporter
+    - name: Download node_exporter
+      get_url:
+        url: https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+        dest: /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+        mode: '0644'
+
+    - name: Extract node_exporter archive
+      unarchive:
+        src: /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+        dest: /tmp
+        remote_src: yes
+        creates: /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64
+
+    - name: Copy node_exporter binary
+      copy:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: "/usr/local/bin/node_exporter"
+        remote_src: yes
+        mode: '0755'
+
+    - name: Create node_exporter systemd service file
+      template:
+        src: templates/node_exporter.service.j2
+        dest: /etc/systemd/system/node_exporter.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: reload systemd
+
+    - name: Start and enable node_exporter service
+      systemd:
+        name: node_exporter
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Verify node_exporter is running
+      uri:
+        url: http://localhost:9100/metrics
+        return_content: yes
+      register: node_exporter_metrics
+      failed_when:
+        - "'node_' not in node_exporter_metrics.content"
+        - node_exporter_metrics.status != 200
+
+  handlers:
+    - name: restart grafana
+      systemd:
+        name: grafana-server
+        state: restarted
+
+    - name: validate nginx config
+      command: nginx -t
+      changed_when: false
+      register: result
+      listen: "restart nginx"
+      failed_when:
+        - result.rc != 0
+
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+
+    - name: reload systemd
+      systemd:
+        daemon_reload: yes
